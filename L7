@@ -1,0 +1,64 @@
+Map.addLayer(NEMIA ,{color: 'red'})
+Map.centerObject(NEMIA,4)
+var landsat7 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2") 
+var landsat7Filtered = landsat7.filterBounds(NEMIA);
+var landsat7DateFiltered = landsat7Filtered.filterDate('2015-06-01', '2015-08-31');
+
+// Cloud masking function
+var masking = function(image) {
+  var cloudShadowBitmask = (1<<3)
+  var cloudMask = (1<<4)
+  var qa = image.select('QA_PIXEL')
+  var maskShadow = qa.bitwiseAnd(cloudShadowBitmask).eq(0)
+  var maskCloud = qa.bitwiseAnd(cloudMask).eq(0)
+  var mask = maskShadow.and(maskCloud)
+  return image.updateMask(mask);
+};
+
+var cloudFreeImage = landsat7DateFiltered.sort('CLOUD_COVER_LAND')
+.map(masking)
+.mean();
+
+var clippedImage = cloudFreeImage.clip(NEMIA);
+
+// Applies scaling factors to image bands.
+var scale = function(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBand, null, true);
+}
+
+var scaledImage = scale(clippedImage);  
+
+Map.addLayer(scaledImage);
+Map.addLayer(scaledImage, imageVisParam, 'True Color' )
+
+var thermalBand = scaledImage.select('ST_B6');
+
+var lstCelsius = thermalBand.subtract(273.15)
+var lstThreshold = lstCelsius.updateMask(lstCelsius.gte(0));
+
+var lstColor = {min: -10, max: 30, palette: ['blue','limegreen','yellow','orange']}
+Map.addLayer(lstCelsius,lstColor,'LST1')
+  
+Export.image.toDrive({
+  image: lstThreshold,
+  description: 'L7_June_2000',
+  folder: 'L7_June_2000',
+  scale: 30,
+  region: NEMIA.geometry().bounds(),
+  maxPixels: 1e13
+});
+
+// Create a histogram of lstCelsius values.
+var histogram = ui.Chart.image.histogram({
+ image: lstThreshold,
+ region: NEMIA.geometry(),
+ scale: 30,
+ minBucketWidth: 1,
+ maxPixels: 1e15
+});
+
+// Display the histogram.
+print(histogram);

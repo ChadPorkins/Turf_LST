@@ -1,0 +1,56 @@
+
+Map.addLayer(NEMIA ,{color: 'red'})
+Map.centerObject(NEMIA,4)
+var landsat9 = ee.ImageCollection("LANDSAT/LC09/C02/T1_L2") 
+var landsat9Filtered = landsat9.filterBounds(NEMIA);
+var landsat9DateFiltered = landsat9Filtered.filterDate('2022-08-01', '2023-08-31');
+
+//cloud masking
+var masking = function(img) {
+var cloudshadowBitmask =(1<<4)
+var cloudshadowmask = (1<<3)
+var cirus = (1<<2)
+var qa = img.select('QA_PIXEL')
+var maskshadow = qa.bitwiseAnd(cloudshadowBitmask).eq(0)
+var maskcloud = qa.bitwiseAnd(cloudshadowmask).eq(0)
+var maskValue2 = qa.bitwiseAnd(cirus).eq(0); // Add bit mask for value 2
+var mask = maskshadow.and(maskcloud).and(maskValue2); // Include new mask
+return img.updateMask(mask);
+};
+
+var cloudFreeImage = landsat9DateFiltered.sort('CLOUD_COVER_LAND')
+.map(masking)
+.mean();
+
+
+var clippedImage = cloudFreeImage.clip(NEMIA);
+
+// Applies scaling factors.
+var scale = function applyScaleFactors(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBands, null, true);
+}
+
+var scaledImage = scale(clippedImage);  
+  
+Map.addLayer(scaledImage);
+Map.addLayer(scaledImage, imageVisParam, 'True Color' )
+
+var thermalBand = scaledImage.select('ST_B10');
+
+var LSTcelcius = thermalBand.subtract(273.15)
+
+
+var LST_Color = {min: -30, max: 50, palette: ['blue','limegreen','yellow','orange']}
+Map.addLayer(LSTcelcius,LST_Color,'LST1')
+  
+Export.image.toDrive({
+  image: LSTcelcius,
+  description: 'L9_Summer_22_August',
+  folder: 'L9_Summer_22_August',
+  scale: 30,
+  region: NEMIA.geometry().bounds(),
+  maxPixels: 1e13
+});
